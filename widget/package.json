@@ -19,7 +19,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@quantum-chat/shared": "file:../../backend/shared",
+    "@quantum-chat/shared": "file:../../backend/src/shared",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "react": "^18.0.0",
