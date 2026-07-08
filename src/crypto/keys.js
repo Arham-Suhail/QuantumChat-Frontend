@@ -1,5 +1,7 @@
 import nacl from 'tweetnacl';
-import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
+import naclUtil from 'tweetnacl-util';
+
+const { encodeBase64, decodeBase64 } = naclUtil;
 
 function toHex(bytes) {
   return Array.from(bytes)
