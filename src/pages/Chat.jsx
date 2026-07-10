@@ -158,7 +158,7 @@ export default function Chat() {
 
   const title = useMemo(() => selectedUser?.username || 'Select a conversation', [selectedUser]);
   const filteredUsers = useMemo(
-    () => users.filter((u) => u.username.toLowerCase().includes(search.toLowerCase())),
+    () => users.filter((u) => u?.username?.toLowerCase().includes(search.toLowerCase())),
     [users, search]
   );
 
