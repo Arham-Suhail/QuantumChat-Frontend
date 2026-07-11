@@ -9,6 +9,7 @@ import { cacheVoiceNote, normalizeAttachment, pickRecorderMimeType } from '../cr
 import { playReceiveSound, playSendSound } from '../utils/sounds.js';
 import UserList from '../components/UserList.jsx';
 import MessageBubble from '../components/MessageBubble.jsx';
+import EmojiPicker from '../components/EmojiPicker.jsx';
 
 const MAX_VOICE_SECONDS = 60;
 
@@ -39,6 +40,7 @@ export default function Chat() {
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [sendingVoice, setSendingVoice] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const messageListRef = useRef(null);
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -123,9 +125,10 @@ export default function Chat() {
       }
 
       setMessages((prev) => {
+        const id = String(raw.id || raw._id);
+        if (prev.some((m) => String(m.id || m._id) === id)) return prev;
         const next = [...prev, decorate(raw)];
 
-        // Conditional scroll context
         if (messageListRef.current) {
           const el = messageListRef.current;
           const isUp = el.scrollHeight - el.scrollTop - el.clientHeight > 150;
@@ -139,8 +142,29 @@ export default function Chat() {
       });
     }
 
+    function handleDeleted(payload) {
+      const id = String(payload?.id || '');
+      if (!id) return;
+      setMessages((prev) => prev.filter((m) => String(m.id || m._id) !== id));
+    }
+
+    function handleReaction(raw) {
+      const id = String(raw?.id || raw?._id || '');
+      if (!id) return;
+      const current = selectedUserRef.current;
+      const otherId = String(raw.from) === String(user.id) ? raw.to : raw.from;
+      if (!current || String(current.id) !== String(otherId)) return;
+      setMessages((prev) => prev.map((m) => (String(m.id || m._id) === id ? decorate(raw) : m)));
+    }
+
     socket.on('message:new', handleIncoming);
-    return () => socket.off('message:new', handleIncoming);
+    socket.on('message:deleted', handleDeleted);
+    socket.on('message:reaction', handleReaction);
+    return () => {
+      socket.off('message:new', handleIncoming);
+      socket.off('message:deleted', handleDeleted);
+      socket.off('message:reaction', handleReaction);
+    };
   }, [hasLocalKeyring, user, decorate, scrollToBottom]);
 
   // Socket.IO gives instant delivery where it's available (local dev), but
@@ -413,6 +437,34 @@ export default function Chat() {
     };
   }, []);
 
+  async function handleDeleteMessage(messageId) {
+    if (!messageId) return;
+    const confirmed = window.confirm('Delete this message for everyone? It will disappear for both of you with no trace.');
+    if (!confirmed) return;
+    try {
+      await client.delete(`/messages/${messageId}`);
+      setMessages((prev) => prev.filter((m) => String(m.id || m._id) !== String(messageId)));
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete message');
+    }
+  }
+
+  async function handleReactMessage(messageId, emoji) {
+    if (!messageId || !emoji) return;
+    try {
+      const { data } = await client.post(`/messages/${messageId}/reactions`, { emoji });
+      const updated = decorate(data.data);
+      setMessages((prev) => prev.map((m) => (String(m.id || m._id) === String(messageId) ? updated : m)));
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to add reaction');
+    }
+  }
+
+  function insertEmoji(emoji) {
+    setDraft((prev) => `${prev}${emoji}`);
+    setShowEmojiPicker(false);
+  }
+
   async function handleGenerateKeys() {
     await regenerateKeys();
     setError('');
@@ -549,18 +601,21 @@ export default function Chat() {
                       // Message is grouped if sent by same user within 2 minutes of the previous message
                       const isGrouped =
                         prev &&
-                        prev.from === m.from &&
+                        String(prev.from) === String(m.from) &&
                         new Date(m.createdAt) - new Date(prev.createdAt) < 120000;
 
                       return (
                         <MessageBubble
                           key={m.id || m._id}
                           message={m}
-                          isMine={m.from === user.id}
+                          isMine={String(m.from) === String(user.id)}
+                          currentUserId={user.id}
                           resolveAttachmentKey={(attachment) =>
                             resolveMySecretKey(attachment.targetPublicKey)
                           }
                           grouped={isGrouped}
+                          onDelete={handleDeleteMessage}
+                          onReact={handleReactMessage}
                         />
                       );
                     })
@@ -614,50 +669,69 @@ export default function Chat() {
                     </button>
                   </div>
                 ) : (
-                  <form className="composer" onSubmit={handleSend}>
-                    <button
-                      type="button"
-                      className="attach-button"
-                      onClick={() => fileInputRef.current?.click()}
-                      aria-label="Attach file to message"
-                      disabled={sendingVoice}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                      </svg>
-                    </button>
-                    <input ref={fileInputRef} type="file" hidden onChange={handleFileChange} />
-                    <input
-                      placeholder={sendingVoice ? 'Sending voice note…' : 'Type an encrypted message…'}
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      aria-label="Type message body"
-                      disabled={sendingVoice}
-                    />
-                    {draft.trim() ? (
-                      <button type="submit" className="send-button" aria-label="Send encrypted message" disabled={sendingVoice}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="22" y1="2" x2="11" y2="13" />
-                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                        </svg>
-                      </button>
-                    ) : (
+                  <div className="composer-shell">
+                    {showEmojiPicker && (
+                      <EmojiPicker onPick={insertEmoji} onClose={() => setShowEmojiPicker(false)} />
+                    )}
+                    <form className="composer" onSubmit={handleSend}>
                       <button
                         type="button"
-                        className="send-button voice-mic-btn"
-                        onClick={startVoiceRecording}
-                        aria-label="Record voice note"
+                        className="attach-button"
+                        onClick={() => fileInputRef.current?.click()}
+                        aria-label="Attach file to message"
                         disabled={sendingVoice}
                       >
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                          <line x1="12" y1="19" x2="12" y2="23" />
-                          <line x1="8" y1="23" x2="16" y2="23" />
+                          <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                         </svg>
                       </button>
-                    )}
-                  </form>
+                      <button
+                        type="button"
+                        className={`attach-button ${showEmojiPicker ? 'active' : ''}`}
+                        onClick={() => setShowEmojiPicker((v) => !v)}
+                        aria-label="Open emoji picker"
+                        disabled={sendingVoice}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                          <line x1="9" y1="9" x2="9.01" y2="9" />
+                          <line x1="15" y1="9" x2="15.01" y2="9" />
+                        </svg>
+                      </button>
+                      <input ref={fileInputRef} type="file" hidden onChange={handleFileChange} />
+                      <input
+                        placeholder={sendingVoice ? 'Sending voice note…' : 'Type an encrypted message…'}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        aria-label="Type message body"
+                        disabled={sendingVoice}
+                      />
+                      {draft.trim() ? (
+                        <button type="submit" className="send-button" aria-label="Send encrypted message" disabled={sendingVoice}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13" />
+                            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                          </svg>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="send-button voice-mic-btn"
+                          onClick={startVoiceRecording}
+                          aria-label="Record voice note"
+                          disabled={sendingVoice}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                            <line x1="12" y1="19" x2="12" y2="23" />
+                            <line x1="8" y1="23" x2="16" y2="23" />
+                          </svg>
+                        </button>
+                      )}
+                    </form>
+                  </div>
                 )}
               </>
             )}
