@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import client from '../api/client.js';
 import { unsealBytes } from '../crypto/keys.js';
-import { attachmentIdOf, getCachedVoiceNote, normalizeAttachment } from '../crypto/voiceCache.js';
+import { attachmentIdOf, normalizeAttachment, pickAttachmentEnvelope } from '../crypto/voiceCache.js';
 
 function FileIcon({ className }) {
   return (
@@ -104,38 +104,27 @@ function VoicePlayer({ url }) {
   );
 }
 
-export default function AttachmentBubble({ attachment: rawAttachment, isMine, resolveAttachmentKey }) {
+export default function AttachmentBubble({ attachment: rawAttachment, isMine, resolveSecretKey }) {
   const attachment = normalizeAttachment(rawAttachment);
   const [status, setStatus] = useState('idle');
   const [preview, setPreview] = useState(null);
   const [audioUrl, setAudioUrl] = useState(null);
   const audio = isAudioAttachment(attachment);
   const attachmentId = attachmentIdOf(attachment);
-  const mySecretKey = attachment?.targetPublicKey ? resolveAttachmentKey(attachment) : null;
+  const opened = pickAttachmentEnvelope(attachment, resolveSecretKey);
 
   useEffect(() => {
     let revoked = null;
     let cancelled = false;
 
     async function loadVoice() {
-      if (!audio || !attachmentId) return;
-
-      const cached = getCachedVoiceNote(attachmentId);
-      if (cached) {
-        const blob = new Blob([cached.bytes], { type: cached.mimetype || 'audio/webm' });
-        const url = URL.createObjectURL(blob);
-        revoked = url;
-        setAudioUrl(url);
-        return;
-      }
-
-      if (!mySecretKey || !attachment.nonce || !attachment.ephemeralPublicKey) return;
+      if (!audio || !attachmentId || !opened) return;
 
       setStatus('loading');
       try {
         const res = await client.get(`/attachments/${attachmentId}/raw`, { responseType: 'arraybuffer' });
         if (cancelled) return;
-        const plainBytes = unsealBytes(new Uint8Array(res.data), attachment, mySecretKey);
+        const plainBytes = unsealBytes(new Uint8Array(res.data), opened.envelope, opened.secretKey);
         if (!plainBytes) {
           setStatus('error');
           return;
@@ -155,8 +144,14 @@ export default function AttachmentBubble({ attachment: rawAttachment, isMine, re
       cancelled = true;
       if (revoked) URL.revokeObjectURL(revoked);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reload when identity/envelope changes
-  }, [audio, attachmentId, mySecretKey, attachment?.nonce, attachment?.ephemeralPublicKey, attachment?.mimetype]);
+  }, [
+    audio,
+    attachmentId,
+    opened?.secretKey,
+    opened?.envelope?.nonce,
+    opened?.envelope?.targetPublicKey,
+    attachment?.mimetype,
+  ]);
 
   if (!attachment) return null;
 
@@ -164,7 +159,7 @@ export default function AttachmentBubble({ attachment: rawAttachment, isMine, re
     return <VoicePlayer url={audioUrl} />;
   }
 
-  if (!mySecretKey && audio) {
+  if (!opened && audio) {
     return (
       <div className="attachment-chip attachment-chip-disabled">
         <span className="attachment-filename">
@@ -172,20 +167,20 @@ export default function AttachmentBubble({ attachment: rawAttachment, isMine, re
           <span>Voice note</span>
         </span>
         <span className="attachment-note">
-          {status === 'loading' ? 'Decrypting…' : isMine ? 'only the recipient can open this' : "can't decrypt on this device"}
+          {status === 'loading' ? 'Decrypting…' : isMine ? "can't decrypt on this device" : "can't decrypt on this device"}
         </span>
       </div>
     );
   }
 
-  if (!mySecretKey) {
+  if (!opened) {
     return (
       <div className="attachment-chip attachment-chip-disabled">
         <span className="attachment-filename">
           <FileIcon className="file-icon" />
           <span>{attachment.filename}</span>
         </span>
-        <span className="attachment-note">{isMine ? 'only the recipient can open this' : "can't decrypt on this device"}</span>
+        <span className="attachment-note">can't decrypt on this device</span>
       </div>
     );
   }
@@ -194,7 +189,7 @@ export default function AttachmentBubble({ attachment: rawAttachment, isMine, re
     setStatus('loading');
     try {
       const res = await client.get(`/attachments/${attachmentId}/raw`, { responseType: 'arraybuffer' });
-      const plainBytes = unsealBytes(new Uint8Array(res.data), attachment, mySecretKey);
+      const plainBytes = unsealBytes(new Uint8Array(res.data), opened.envelope, opened.secretKey);
       if (!plainBytes) {
         setStatus('error');
         return;

@@ -1,22 +1,3 @@
-const PREFIX = 'qc_voice_';
-
-function toBase64(bytes) {
-  let binary = '';
-  const chunk = 0x2000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    const slice = bytes.subarray(i, i + chunk);
-    binary += String.fromCharCode.apply(null, slice);
-  }
-  return btoa(binary);
-}
-
-function fromBase64(b64) {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
 export function attachmentIdOf(attachmentOrId) {
   if (!attachmentOrId) return null;
   if (typeof attachmentOrId === 'string') return attachmentOrId;
@@ -43,35 +24,43 @@ export function normalizeAttachment(raw) {
   };
 }
 
-/** Cache a voice note locally so the sender can replay it after send. */
-export function cacheVoiceNote(attachmentId, { bytes, mimetype }) {
-  const id = attachmentIdOf(attachmentId);
-  if (!id || !bytes) return;
-  try {
-    localStorage.setItem(
-      PREFIX + id,
-      JSON.stringify({ mimetype: mimetype || 'audio/webm', data: toBase64(bytes) })
-    );
-  } catch {
-    // Quota exceeded — voice still sends; sender just can't replay locally.
-  }
-}
+/**
+ * Pick the sealed-box envelope this device can open for an attachment.
+ * Dual-sealed uploads: recipient copy + sender copy (5-key pools).
+ */
+export function pickAttachmentEnvelope(attachment, resolveSecretKey) {
+  if (!attachment || !resolveSecretKey) return null;
 
-export function getCachedVoiceNote(attachmentId) {
-  const id = attachmentIdOf(attachmentId);
-  if (!id) return null;
-  try {
-    const raw = localStorage.getItem(PREFIX + id);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.data) return null;
-    return {
-      mimetype: parsed.mimetype || 'audio/webm',
-      bytes: fromBase64(parsed.data),
-    };
-  } catch {
-    return null;
+  const senderTarget = attachment.forSenderTargetPublicKey;
+  if (senderTarget && attachment.forSenderNonce && attachment.forSenderEphemeralPublicKey) {
+    const secretKey = resolveSecretKey(senderTarget);
+    if (secretKey) {
+      return {
+        secretKey,
+        envelope: {
+          nonce: attachment.forSenderNonce,
+          ephemeralPublicKey: attachment.forSenderEphemeralPublicKey,
+          targetPublicKey: senderTarget,
+        },
+      };
+    }
   }
+
+  if (attachment.targetPublicKey && attachment.nonce && attachment.ephemeralPublicKey) {
+    const secretKey = resolveSecretKey(attachment.targetPublicKey);
+    if (secretKey) {
+      return {
+        secretKey,
+        envelope: {
+          nonce: attachment.nonce,
+          ephemeralPublicKey: attachment.ephemeralPublicKey,
+          targetPublicKey: attachment.targetPublicKey,
+        },
+      };
+    }
+  }
+
+  return null;
 }
 
 export function pickRecorderMimeType() {
