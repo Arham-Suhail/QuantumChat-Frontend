@@ -1,3 +1,6 @@
+import { motion } from 'framer-motion';
+import { Ban, Users, UserPlus, X } from 'lucide-react';
+
 function isRecentlyActive(iso) {
   if (!iso) return false;
   return Date.now() - new Date(iso).getTime() < 5 * 60 * 1000;
@@ -52,12 +55,7 @@ export default function ConversationList({
 
       <div className="sidebar-create-row">
         <button type="button" className="create-group-btn" onClick={onCreateGroup}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-            <circle cx="9" cy="7" r="4" />
-            <line x1="19" y1="8" x2="19" y2="14" />
-            <line x1="22" y1="11" x2="16" y2="11" />
-          </svg>
+          <UserPlus size={16} strokeWidth={2} aria-hidden="true" />
           New group
         </button>
       </div>
@@ -76,8 +74,8 @@ export default function ConversationList({
         </div>
       ) : (
         <div className="user-list">
-          {conversations.map((c) => (
-            <div
+          {conversations.map((c, index) => (
+            <motion.div
               key={c.key}
               className={`user-list-item ${c.key === selectedKey ? 'active' : ''} ${c.unread ? 'unread' : ''}`}
               role="button"
@@ -90,15 +88,14 @@ export default function ConversationList({
                 }
               }}
               aria-label={`${c.type === 'group' ? 'Group' : 'Chat'} ${c.title}${c.unread ? ', unread' : ''}`}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.22, delay: Math.min(index * 0.02, 0.16) }}
+              whileHover={{ y: -1 }}
             >
               <span className={`avatar ${c.type === 'group' ? 'group-avatar' : ''}`}>
                 {c.type === 'group' ? (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                  </svg>
+                  <Users size={18} strokeWidth={2} aria-hidden="true" />
                 ) : (
                   <>
                     {(c.title || '?').slice(0, 2).toUpperCase()}
@@ -126,10 +123,7 @@ export default function ConversationList({
                         onHide(c.peer || c);
                       }}
                     >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
+                      <X size={16} strokeWidth={2} aria-hidden="true" />
                     </button>
                   )}
                   {onBlock && (
@@ -143,15 +137,12 @@ export default function ConversationList({
                         onBlock(c.peer || c);
                       }}
                     >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-                      </svg>
+                      <Ban size={16} strokeWidth={2} aria-hidden="true" />
                     </button>
                   )}
                 </span>
               )}
-            </div>
+            </motion.div>
           ))}
           {conversations.length === 0 && (
             <p className="empty-hint">

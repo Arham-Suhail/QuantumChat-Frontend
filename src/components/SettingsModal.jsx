@@ -1,10 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTheme } from '../context/ThemeContext.jsx';
+import client from '../api/client.js';
+import UserAvatar, { bustAvatarCache } from './UserAvatar.jsx';
 
-export default function SettingsModal({ user, onClose, onImportKeys, onGenerateKeys }) {
+export default function SettingsModal({ user, onClose, onImportKeys, onGenerateKeys, onUserUpdated }) {
   const { theme, toggleTheme } = useTheme();
   const closeRef = useRef(null);
-  const fileInputRef = useRef(null);
+  const keyInputRef = useRef(null);
+  const avatarInputRef = useRef(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
   const isDark = theme === 'dark';
 
   useEffect(() => {
@@ -21,6 +26,25 @@ export default function SettingsModal({ user, onClose, onImportKeys, onGenerateK
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [onClose]);
+
+  async function handleAvatarChange(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setAvatarError('');
+    setAvatarBusy(true);
+    try {
+      const form = new FormData();
+      form.append('avatar', file);
+      const { data } = await client.post('/users/me/avatar', form);
+      bustAvatarCache(user.id);
+      onUserUpdated?.(data.data);
+    } catch (err) {
+      setAvatarError(err.response?.data?.error || 'Failed to upload profile photo');
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
 
   return (
     <div className="create-group-overlay" role="presentation" onClick={onClose}>
@@ -40,7 +64,7 @@ export default function SettingsModal({ user, onClose, onImportKeys, onGenerateK
           </div>
           <div className="create-group-modal-heading">
             <h2 id="settings-title">Settings</h2>
-            <p>Account, appearance, and keys</p>
+            <p>Profile, appearance, and keys</p>
           </div>
           <button
             ref={closeRef}
@@ -57,14 +81,24 @@ export default function SettingsModal({ user, onClose, onImportKeys, onGenerateK
         </div>
 
         <section className="settings-section">
-          <h3 className="settings-section-title">Account</h3>
+          <h3 className="settings-section-title">Profile</h3>
           <div className="settings-account">
-            <span className="avatar">{(user?.username || '?').slice(0, 2).toUpperCase()}</span>
+            <UserAvatar userId={user?.id} name={user?.username} hasAvatar={user?.hasAvatar} />
             <div className="settings-account-meta">
               <span className="settings-account-name">{user?.username}</span>
               <span className="settings-account-email">{user?.email || 'No email'}</span>
             </div>
           </div>
+          <button
+            type="button"
+            className="confirm-btn cancel"
+            disabled={avatarBusy}
+            onClick={() => avatarInputRef.current?.click()}
+          >
+            {avatarBusy ? 'Uploading…' : 'Upload profile photo'}
+          </button>
+          <input ref={avatarInputRef} type="file" accept="image/*" hidden onChange={handleAvatarChange} />
+          {avatarError && <div className="auth-error">{avatarError}</div>}
         </section>
 
         <section className="settings-section">
@@ -86,10 +120,10 @@ export default function SettingsModal({ user, onClose, onImportKeys, onGenerateK
             Keys stay on this device. Import a backup to recover old messages, or generate a new set if the old keys are gone.
           </p>
           <div className="settings-key-actions">
-            <button type="button" className="confirm-btn cancel" onClick={() => fileInputRef.current?.click()}>
+            <button type="button" className="confirm-btn cancel" onClick={() => keyInputRef.current?.click()}>
               Import keys.txt
             </button>
-            <input ref={fileInputRef} type="file" accept=".txt" hidden onChange={onImportKeys} />
+            <input ref={keyInputRef} type="file" accept=".txt" hidden onChange={onImportKeys} />
             <button type="button" className="confirm-btn primary" onClick={onGenerateKeys}>
               Generate new keys
             </button>
